@@ -1,0 +1,59 @@
+groups:
+  - name: security-detections
+    rules:
+      - alert: HighAuthFailureRate
+        # Assumes the app exports a counter like:
+        #   app_auth_failures_total{method="password"}
+        # See DETECTIONS.md for the instrumentation contract.
+        expr: rate(app_auth_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          category: brute-force
+        annotations:
+          summary: "High rate of authentication failures ({{ $value | printf \"%.1f\" }}/s)"
+          description: "More than 5 failed auth attempts/sec sustained for 2m on {{ $labels.instance }}."
+
+      - alert: ContainerCrashLoop
+        expr: rate(container_last_seen[5m]) > 0 and increase(container_start_time_seconds[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          category: instability
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting repeatedly"
+          description: "More than 3 restarts in 10m - could be a crash, or exploitation attempts crashing the process."
+
+      - alert: UnexpectedPrivilegedProcess
+        # Assumes a node-level exporter or textfile collector exposing
+        # process_running_as_root{process="..."} for processes expected to
+        # run unprivileged. See DETECTIONS.md.
+        expr: process_running_as_root{expected="false"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          category: privilege-escalation
+        annotations:
+          summary: "Process {{ $labels.process }} is running as root unexpectedly"
+          description: "{{ $labels.process }} on {{ $labels.instance }} is running as root but is not expected to."
+
+      - alert: HighRateOf4xxFromSingleSource
+        # Assumes app_http_requests_total{status,source_ip} style labels.
+        expr: sum by (source_ip) (rate(app_http_requests_total{status=~"401|403"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+          category: enumeration
+        annotations:
+          summary: "High 401/403 rate from {{ $labels.source_ip }}"
+          description: "More than 10 auth-denied responses/sec from a single source - possible scanning or credential stuffing."
+
+      - alert: NodeExporterTargetDown
+        expr: up{job="node-exporter"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: monitoring-gap
+        annotations:
+          summary: "node-exporter target {{ $labels.instance }} is down"
+          description: "A monitored host has stopped reporting metrics - could be routine, or monitoring being deliberately disabled."
